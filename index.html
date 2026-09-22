@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Check-in</title>
+
+  <!-- KAMERA ŞARTLARI (google-EM.md → K-007) — değiştirme:
+       · kütüphane <head>'de, sürümsüz unpkg, düz <script src> (old-qr ile aynı)
+       · #qr-reader açılışta GÖRÜNÜR
+       · initScanner() DOMContentLoaded'da koşulsuz ve senkron; hiçbir
+         google.script.run cevabını BEKLEMİYOR -->
+  <script src="https://unpkg.com/html5-qrcode"></script>
+
+  <style>
+    :root { --primary:#2E3192; --green:#7AC143; --sun:#F7A800; --danger:#D62828;
+            --dark:#1a1a2e; --light:#f7f7fa; --text:#2b2b2b; --muted:#6b6b7b; }
+    * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+    body { margin:0; padding:12px; background:var(--light); color:var(--text);
+           font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+           font-size:16px; line-height:1.4; }
+    .wrap { max-width:520px; margin:0 auto; }
+
+    .bar { background:var(--dark); color:#fff; border-radius:12px; padding:10px 14px;
+           margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; gap:10px; }
+    .bar .ev { font-weight:700; font-size:14px; }
+    .bar .st { font-size:13px; color:#ffffffcc; white-space:nowrap; }
+    .bar .st b { color:#fff; font-size:15px; }
+
+    .cam { width:100%; max-width:420px; margin:0 auto 10px; border-radius:14px;
+           overflow:hidden; background:#000; }
+    #qr-reader { width:100%; }
+    #qr-reader video { width:100% !important; height:auto !important; display:block; }
+    .hint { text-align:center; font-size:13px; color:var(--muted); margin:0 0 10px; }
+    .hint.err { color:var(--danger); }
+
+    .res { border-radius:14px; padding:16px; color:#fff; margin-bottom:10px; }
+    .res.first  { background:var(--green); }
+    .res.repeat { background:var(--sun); }
+    .res.bad    { background:var(--danger); }
+    .res.wait   { background:#8a8aa0; }
+    .res .head  { font-size:22px; font-weight:800; text-transform:uppercase; letter-spacing:.5px; }
+    .res .who   { font-size:24px; font-weight:700; margin-top:6px; }
+    .res .meta  { font-size:14px; opacity:.95; margin-top:4px; }
+    .res .code  { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:15px; opacity:.9; }
+    .res .save  { font-size:12px; opacity:.85; margin-top:8px; }
+
+    .card { background:#fff; border-radius:14px; padding:14px; margin-bottom:10px;
+            box-shadow:0 2px 10px rgba(0,0,0,.06); }
+    .line { display:flex; gap:8px; }
+    input { flex:1; min-width:0; padding:13px 14px; font-size:18px; border:2px solid #dcdce6;
+            border-radius:10px; color:var(--text); background:#fff; }
+    input:focus { outline:none; border-color:var(--primary); }
+    button { padding:13px 18px; font-size:16px; font-weight:700; color:#fff; background:var(--primary);
+             border:0; border-radius:10px; cursor:pointer; }
+    button:active { opacity:.85; }
+    .small { font-size:12px; color:var(--muted); margin-top:8px; }
+    .match { display:block; width:100%; text-align:left; margin-top:8px; background:#fff;
+             color:var(--text); border:2px solid #dcdce6; font-weight:600; font-size:15px; }
+    .match span { color:var(--muted); font-weight:400; font-size:13px; }
+    .hidden { display:none !important; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="bar">
+    <span class="ev" id="ev">Check-in</span>
+    <span class="st">Girdi <b id="in">–</b> / <span id="tot">–</span></span>
+  </div>
+
+  <div class="cam"><div id="qr-reader"></div></div>
+  <p class="hint" id="hint">QR'ı çerçeveye getir — kendiliğinden okunur.</p>
+
+  <div id="res" class="hidden"></div>
+
+  <div class="card">
+    <div class="line">
+      <input id="q" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"
+             placeholder="013 ya da isim">
+      <button id="go">Bul</button>
+    </div>
+    <div id="matches"></div>
+    <div class="small">Numara: 013 · 13 · IZM-013 — İsim: en az 3 harf.</div>
+  </div>
+
+  <div class="card">
+    <div class="line">
+      <input id="me" type="text" autocomplete="off" placeholder="Okutan: adın (isteğe bağlı)">
+    </div>
+    <div class="small" id="sync">Liste yükleniyor…</div>
+  </div>
+
+</div>
+
+<script>
+  var T = {};              // kod → {name, section, esncard, count, firstAt}
+  var PREFIX = '';
+  var shown = '';          // ekranda sonucu duran kod
+  var last = { code: '', at: 0 };
+  var scanning = false;
+
+  function el(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function store(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  function load(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }
+
+  // ============================================================
+  // SUNUCU ÇAĞRISI — iki mod:
+  //   · Apps Script içinde açıldıysa  → google.script.run
+  //   · Dışarıda (GitHub Pages vb.)   → /exec?api=... fetch
+  // Dış modda /exec linki OC linkinin # kısmında gelir:  .../index.html#api=https://script.google.com/.../exec
+  // (# sonrası sunucuya gitmez, sayfa kaynağında da durmaz). Bir kez açılınca telefon hatırlar.
+  // ============================================================
+  var INSIDE = !!(window.google && google.script && google.script.run);
+  var API = '';
+  (function () {
+    var m = location.hash.match(/api=([^&]+)/);
+    if (m) {
+      try { API = decodeURIComponent(m[1]); } catch (e) { API = m[1]; }
+      store('esn_api', API);
+      try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+    } else {
+      API = load('esn_api');
+    }
+  })();
+
+  function call(fn, args, ok, fail) {
+    if (INSIDE) {
+      var r = google.script.run.withSuccessHandler(ok).withFailureHandler(fail);
+      r[fn].apply(r, args);
+      return;
+    }
+    if (!API) { fail(new Error('Sunucu linki yok — sana gönderilen OC linkini bir kez aç.')); return; }
+    var url = API + '?api=' + fn + '&a=' + encodeURIComponent(JSON.stringify(args)) + '&_=' + Date.now();
+    fetch(url).then(function (res) { return res.json(); })
+      .then(function (j) { if (j.error) fail(new Error(j.error)); else ok(j.result); })
+      .catch(fail);
+  }
+
+  // Sunucudaki normalize_ ile aynı
+  function normalize(raw) {
+    var s = String(raw == null ? '' : raw).trim();
+    var m = s.match(/[?&]t=([^&#\s]+)/);
+    if (m) { try { s = decodeURIComponent(m[1]); } catch (e) { s = m[1]; } }
+    s = s.toUpperCase();
+    var pre = PREFIX;
+    if (!pre) {
+      // Liste henüz gelmedi, önek bilinmiyor: "IZM-013" gibi tam kodu olduğu gibi al,
+      // yalnız rakamsa ham gönder — sunucu tamamlar
+      var mm = s.match(/^([A-Z]+)[\s\-_]*\d+$/);
+      if (!mm) return s.replace(/[^0-9]/g, '');
+      pre = mm[1];
+    }
+    if (s.indexOf(pre) === 0) s = s.substring(pre.length);
+    var d = s.replace(/[^0-9]/g, '');
+    if (!d) return '';
+    return pre + '-' + (d.length < 3 ? ('00' + d).slice(-3) : d);
+  }
+
+  // ============================================================
+  // KAMERA — hiç durmuyor; okunan kod ekranda kaldığı sürece yok sayılıyor
+  // ============================================================
+  function initScanner() {
+    if (typeof Html5Qrcode === 'undefined') {
+      camErr('Kamera kütüphanesi yüklenemedi (internet?). Aşağıdan elle gir.');
+      return;
+    }
+    if (scanning) return;
+
+    var opts = { verbose: false };
+    if (typeof Html5QrcodeSupportedFormats !== 'undefined') {
+      opts.formatsToSupport = [Html5QrcodeSupportedFormats.QR_CODE];
+    }
+    // Destekleyen tarayıcıda (Android Chrome) yerleşik okuyucu — çok daha hızlı
+    opts.experimentalFeatures = { useBarCodeDetectorIfSupported: true };
+
+    if (!window.html5QrCode) window.html5QrCode = new Html5Qrcode('qr-reader', opts);
+
+    window.html5QrCode.start(
+      { facingMode: 'environment' },
+      { fps: 15, qrbox: 240 },
+      onScan,
+      function () {}          // her karede "bulunamadı" — normal, sessiz
+    ).then(function () {
+      scanning = true;
+      el('hint').className = 'hint';
+      el('hint').textContent = "QR'ı çerçeveye getir — kendiliğinden okunur.";
+    }).catch(function (err) {
+      camErr('Kamera açılamadı: ' + (err && err.name ? err.name + ' ' : '') +
+             (err && err.message ? err.message : err));
+    });
+  }
+
+  function camErr(msg) {
+    scanning = false;
+    el('hint').className = 'hint err';
+    el('hint').innerHTML = esc(msg) + '<br><a href="#" id="retry">Tekrar dene</a>';
+    el('retry').onclick = function (e) { e.preventDefault(); initScanner(); };
+    camDiag();
+  }
+
+  // Hatanın kaynağını ayırt etmek için: uygulama içi tarayıcı mı, izin durumu ne
+  function camDiag() {
+    var ua = navigator.userAgent;
+    var inApp = /; wv\)|FBAN|FBAV|Instagram|WhatsApp|GSA\/|Line\//.test(ua);
+    var lines = [
+      'Tarayıcı: ' + (inApp ? 'UYGULAMA İÇİ (WhatsApp/Gmail vb.) ⚠️' : 'normal'),
+      'iframe: ' + (window.self !== window.top ? 'evet' : 'hayır'),
+      'ua: ' + ua
+    ];
+    var box = document.createElement('div');
+    box.className = 'small';
+    box.style.cssText = 'text-align:left;word-break:break-all;margin-top:8px';
+    function draw() { box.textContent = lines.join('\n'); box.style.whiteSpace = 'pre-wrap'; }
+    draw();
+    el('hint').appendChild(box);
+    try {
+      navigator.permissions.query({ name: 'camera' }).then(function (p) {
+        lines.splice(1, 0, 'Kamera izni: ' + p.state);
+        draw();
+      }).catch(function () {});
+    } catch (e) {}
+  }
+
+  function onScan(text) {
+    var code = normalize(text);
+    if (!code) return;
+    var now = Date.now();
+    // Aynı QR çerçevede durdukça tekrar sayılmasın: 3 sn görünmez olması gerekiyor
+    if (code === last.code && now - last.at < 3000) { last.at = now; return; }
+    last = { code: code, at: now };
+    submit(code);
+  }
+
+  // ============================================================
+  // OKUTMA — sonuç yerel listeden ANINDA, kayıt arkada
+  // ============================================================
+  function submit(code) {
+    buzz();
+    shown = code;
+    var t = T[code];
+
+    if (t) {
+      render(t.count > 0 ? 'repeat' : 'first', code, t, t.count + 1, 'kaydediliyor…');
+      t.count++;                          // iyimser; sunucu cevabı düzeltir
+      if (t.count === 1) t.firstAt = 'şimdi';
+      stats();
+    } else {
+      render('wait', code, null, 0, 'sunucuda kontrol ediliyor…');
+    }
+
+    call('checkIn', [code, el('me').value.trim()], function (r) {
+        if (shown === code) shown = r.ticket;   // ham girilen "13" → "IZM-013"
+        if (r.status === 'first' || r.status === 'repeat') {
+          T[r.ticket] = { name: r.name, section: r.section, esncard: r.esncard,
+                          count: r.count, firstAt: r.firstAt };
+          stats();
+          if (shown === r.ticket) render(r.status, r.ticket, T[r.ticket], r.count, '✓ kaydedildi ' + r.at.slice(-8));
+        } else {
+          if (t) { t.count = Math.max(0, t.count - 1); stats(); }
+          if (shown === r.ticket) render(r.status === 'busy' ? 'busy' : 'notfound', r.ticket, null, 0, '');
+        }
+      }, function (err) {
+        if (t) { t.count = Math.max(0, t.count - 1); stats(); }
+        if (shown === code) {
+          render('fail', code, t, 0, 'KAYDEDİLMEDİ, tekrar okut — ' + (err && err.message ? err.message : err));
+        }
+      });
+  }
+
+  function render(kind, code, t, n, saveMsg) {
+    var cls = { first: 'first', repeat: 'repeat', wait: 'wait', busy: 'repeat',
+                notfound: 'bad', fail: 'bad' }[kind];
+    var head = { first: '✅ Giriş', repeat: '⚠️ Daha önce okutuldu', wait: '… Aranıyor',
+                 busy: '⏳ Meşgul — tekrar okut', notfound: '❌ Bilet bulunamadı',
+                 fail: '📶 Bağlantı hatası' }[kind];
+    var h = '<div class="res ' + cls + '"><div class="head">' + head + '</div>';
+    if (t) {
+      h += '<div class="who">' + esc(t.name || '—') + '</div>' +
+           '<div class="meta">' + esc([t.section, t.esncard ? 'ESNcard: ' + t.esncard : '']
+                                        .filter(Boolean).join(' · ')) + '</div>';
+      if (kind === 'repeat') {
+        h += '<div class="meta">İlk: ' + esc(t.firstAt || '?') + ' · bu ' + n + '. okutma</div>';
+      }
+    }
+    h += '<div class="code">' + esc(code) + '</div>';
+    if (saveMsg) h += '<div class="save">' + esc(saveMsg) + '</div>';
+    el('res').innerHTML = h + '</div>';
+    el('res').className = '';
+  }
+
+  function buzz() { try { if (navigator.vibrate) navigator.vibrate(80); } catch (e) {} }
+
+  function stats() {
+    var tot = 0, inside = 0;
+    for (var k in T) { tot++; if (T[k].count > 0) inside++; }
+    el('in').textContent = inside;
+    el('tot').textContent = tot;
+  }
+
+  // ============================================================
+  // ELLE GİRİŞ — numara ya da isim (yerel listede arar)
+  // ============================================================
+  function manual() {
+    var q = el('q').value.trim();
+    el('matches').innerHTML = '';
+    if (!q) return;
+
+    var letters = q.replace(new RegExp('^' + PREFIX, 'i'), '').replace(/[^a-zA-ZçğıöşüÇĞİÖŞÜ]/g, '');
+    if (letters.length < 3) {                 // numara
+      var code = normalize(q);
+      if (code) { last = { code: code, at: Date.now() }; submit(code); el('q').value = ''; }
+      return;
+    }
+
+    var needle = q.toLocaleLowerCase('tr');
+    var hits = [];
+    for (var k in T) {
+      if ((T[k].name || '').toLocaleLowerCase('tr').indexOf(needle) !== -1) hits.push(k);
+      if (hits.length >= 8) break;
+    }
+    if (!hits.length) { el('matches').innerHTML = '<div class="small">Eşleşen isim yok.</div>'; return; }
+
+    el('matches').innerHTML = hits.map(function (k) {
+      return '<button class="match" data-code="' + esc(k) + '">' + esc(T[k].name) +
+             ' <span>' + esc(k) + (T[k].count > 0 ? ' · girdi' : '') + '</span></button>';
+    }).join('');
+  }
+
+  el('go').onclick = manual;
+  el('q').addEventListener('keydown', function (e) { if (e.key === 'Enter') manual(); });
+  el('matches').addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('.match') : null;
+    if (!b) return;
+    el('matches').innerHTML = '';
+    el('q').value = '';
+    submit(b.getAttribute('data-code'));
+  });
+
+  el('me').value = load('esn_scanner');
+  el('me').addEventListener('change', function () { store('esn_scanner', el('me').value.trim()); });
+
+  // ============================================================
+  // LİSTE — açılışta senkronlu, sonra 30 sn'de bir diğer telefonların okuttuklarını çeker
+  // ============================================================
+  function pull(sync) {
+    call('getTickets', [sync], function (r) {
+        PREFIX = r.prefix || PREFIX;
+        if (r.eventName) el('ev').textContent = r.eventName;
+        var next = {};
+        r.tickets.forEach(function (a) {
+          var mine = T[a[0]];
+          // Kendi iyimser sayacımız sunucudan öndeyse onu koru (kayıt yolda)
+          var count = mine && mine.count > a[4] ? mine.count : a[4];
+          next[a[0]] = { name: a[1], section: a[2], esncard: a[3], count: count, firstAt: a[5] };
+        });
+        T = next;
+        stats();
+        el('sync').textContent = 'Liste güncel · ' + new Date().toLocaleTimeString('tr-TR');
+      }, function (err) {
+        el('sync').textContent = 'Liste alınamadı: ' + (err && err.message ? err.message : err) +
+          ' — okutma yine çalışır, sonuç sunucudan gelir.';
+      });
+  }
+
+  // ============================================================
+  // AÇILIŞ — kamera İLK iş, senkron
+  // ============================================================
+  document.addEventListener('DOMContentLoaded', function () {
+    initScanner();
+    pull(true);
+    setInterval(function () { if (!document.hidden) pull(false); }, 30000);
+  });
+</script>
+</body>
+</html>
