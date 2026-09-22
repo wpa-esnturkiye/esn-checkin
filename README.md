@@ -18,4 +18,6 @@ açınca hatırlar. Linki yalnız kapı ekibiyle paylaş.
 Neden Apps Script içinde değil: Apps Script sayfayı kendi iframe'inde sunuyor ve kamera iznini
 her dağıtıma vermiyor. Dışarıda barınan sayfada kamera her telefonda standart şekilde açılıyor.
 
-Sunucu kodu (Code.gs) bu repoda değil — içinde etkinlik sheet linkleri var.
+**Sunucu:** her etkinliğin kendi google-EM Apps Script projesi (`Checkin.gs`) — okutmalar o etkinliğin
+OC TRACK sheet'ine yazılır. Sunucu kodu bu repoda değil; içinde etkinlik sheet linkleri var.
+Bilet QR'ı yalnız kodu taşır (`IZM-013`); eski biletlerin linkli QR'ı da okunur.
