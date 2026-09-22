@@ -1,97 +1,130 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="tr">
 <head>
-  <base target="_top">
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Check-in</title>
-
-  <!-- KAMERA ŞARTLARI (google-EM.md → K-007) — değiştirme:
-       · kütüphane <head>'de, sürümsüz unpkg, düz <script src> (old-qr ile aynı)
-       · #qr-reader açılışta GÖRÜNÜR
-       · initScanner() DOMContentLoaded'da koşulsuz ve senkron; hiçbir
-         google.script.run cevabını BEKLEMİYOR -->
-  <script src="https://unpkg.com/html5-qrcode"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#222428">
+  <title>Check-in — ESN Türkiye</title>
+  <link rel="icon" type="image/svg+xml" href="esn-tema/img/esn-logo.svg">
+  <link rel="stylesheet" href="esn-tema/esn.css">
+  <!-- Sürüm sabit, repoda duruyor — dış istek yok -->
+  <script src="vendor/html5-qrcode.min.js"></script>
 
   <style>
-    :root { --primary:#2E3192; --green:#7AC143; --sun:#F7A800; --danger:#D62828;
-            --dark:#1a1a2e; --light:#f7f7fa; --text:#2b2b2b; --muted:#6b6b7b; }
-    * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-    body { margin:0; padding:12px; background:var(--light); color:var(--text);
-           font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
-           font-size:16px; line-height:1.4; }
-    .wrap { max-width:520px; margin:0 auto; }
+    /* Yalnız bu sayfaya özgü parçalar — hepsi esn.css token'larıyla */
+    .ck-count { font-size:14px; font-weight:500; white-space:nowrap; padding-right:8px; }
+    .ck-count b { font-size:18px; font-weight:600; }
+    .ck-star { width:26px; height:26px; margin-left:8px; }
 
-    .bar { background:var(--dark); color:#fff; border-radius:12px; padding:10px 14px;
-           margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; gap:10px; }
-    .bar .ev { font-weight:700; font-size:14px; }
-    .bar .st { font-size:13px; color:#ffffffcc; white-space:nowrap; }
-    .bar .st b { color:#fff; font-size:15px; }
-
-    .cam { width:100%; max-width:420px; margin:0 auto 10px; border-radius:14px;
-           overflow:hidden; background:#000; }
-    #qr-reader { width:100%; }
+    .ck-cam { margin:10px; border-radius:var(--radius-lg); overflow:hidden; background:#000;
+              box-shadow:var(--shadow-card); }
+    #qr-reader { width:100%; border:0 !important; }
     #qr-reader video { width:100% !important; height:auto !important; display:block; }
-    .hint { text-align:center; font-size:13px; color:var(--muted); margin:0 0 10px; }
-    .hint.err { color:var(--danger); }
+    #qr-reader img[alt="Info icon"], #qr-reader__dashboard_section_csr { display:none !important; }
+    .ck-hint { margin:0 16px 4px; font-size:.875rem; color:var(--text-muted); text-align:center; }
+    .ck-hint--err { color:var(--danger); }
 
-    .res { border-radius:14px; padding:16px; color:#fff; margin-bottom:10px; }
-    .res.first  { background:var(--green); }
-    .res.repeat { background:var(--sun); }
-    .res.bad    { background:var(--danger); }
-    .res.wait   { background:#8a8aa0; }
-    .res .head  { font-size:22px; font-weight:800; text-transform:uppercase; letter-spacing:.5px; }
-    .res .who   { font-size:24px; font-weight:700; margin-top:6px; }
-    .res .meta  { font-size:14px; opacity:.95; margin-top:4px; }
-    .res .code  { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:15px; opacity:.9; }
-    .res .save  { font-size:12px; opacity:.85; margin-top:8px; }
+    /* Sonuç kartı: üst bandı durum rengi (§2 eşlemesi) */
+    .ck-res { margin:10px; border-radius:var(--radius-lg); overflow:hidden; box-shadow:var(--shadow-card);
+              background:var(--surface); }
+    .ck-res__band { padding:14px 16px; color:#fff; font-size:20px; font-weight:600; line-height:1.2; }
+    .ck-res--first  .ck-res__band { background:var(--esn-green); }
+    .ck-res--repeat .ck-res__band { background:var(--esn-orange); }
+    .ck-res--bad    .ck-res__band { background:var(--danger); }
+    .ck-res--wait   .ck-res__band { background:var(--medium); }
+    .ck-res__body { padding:14px 16px 16px; }
+    .ck-res__name { margin:0; font-size:24px; font-weight:500; color:var(--text); line-height:1.25; }
+    .ck-res__meta { margin:6px 0 0; font-size:.875rem; color:var(--text-soft); }
+    .ck-res__foot { display:flex; justify-content:space-between; align-items:center; gap:8px;
+                    margin-top:12px; font-size:12.6px; color:var(--text-muted); }
+    .ck-code { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:14px; color:var(--text); }
 
-    .card { background:#fff; border-radius:14px; padding:14px; margin-bottom:10px;
-            box-shadow:0 2px 10px rgba(0,0,0,.06); }
-    .line { display:flex; gap:8px; }
-    input { flex:1; min-width:0; padding:13px 14px; font-size:18px; border:2px solid #dcdce6;
-            border-radius:10px; color:var(--text); background:#fff; }
-    input:focus { outline:none; border-color:var(--primary); }
-    button { padding:13px 18px; font-size:16px; font-weight:700; color:#fff; background:var(--primary);
-             border:0; border-radius:10px; cursor:pointer; }
-    button:active { opacity:.85; }
-    .small { font-size:12px; color:var(--muted); margin-top:8px; }
-    .match { display:block; width:100%; text-align:left; margin-top:8px; background:#fff;
-             color:var(--text); border:2px solid #dcdce6; font-weight:600; font-size:15px; }
-    .match span { color:var(--muted); font-weight:400; font-size:13px; }
+    .ck-big { font-size:22px; letter-spacing:.04em; }
+    .ck-matches { margin:0 -16px; }
     .hidden { display:none !important; }
   </style>
 </head>
 <body>
-<div class="wrap">
+<div class="esn-app">
 
-  <div class="bar">
-    <span class="ev" id="ev">Check-in</span>
-    <span class="st">Girdi <b id="in">–</b> / <span id="tot">–</span></span>
+  <header class="esn-toolbar">
+    <img class="ck-star" src="esn-tema/img/esn-yildiz-beyaz.svg" alt="ESN">
+    <h1 class="esn-toolbar__title" id="ev">Check-in</h1>
+    <span class="ck-count"><b id="in">–</b> / <span id="tot">–</span></span>
+  </header>
+
+  <div class="esn-segment" role="tablist">
+    <button class="esn-segment__btn" role="tab" data-tab="scan" aria-selected="true">QR Tara</button>
+    <button class="esn-segment__btn" role="tab" data-tab="manual" aria-selected="false">Elle Giriş</button>
   </div>
 
-  <div class="cam"><div id="qr-reader"></div></div>
-  <p class="hint" id="hint">QR'ı çerçeveye getir — kendiliğinden okunur.</p>
+  <main class="esn-content"><div class="esn-container">
 
-  <div id="res" class="hidden"></div>
+    <!-- Bağlantı yoksa: /exec linki buraya -->
+    <section class="esn-card hidden" id="setup">
+      <div class="esn-card__header">
+        <p class="esn-card__subtitle">Kurulum</p>
+        <h2 class="esn-card__title">Sunucu bağlantısı</h2>
+      </div>
+      <div class="esn-card__content">
+        <label class="esn-field">
+          <span class="esn-field__label">Apps Script /exec linki</span>
+          <input class="esn-input" id="apiIn" type="url" autocomplete="off" spellcheck="false"
+                 placeholder="https://script.google.com/macros/s/…/exec">
+          <span class="esn-field__help">Bir kez girilir, telefon hatırlar. OC'lere verilen linkte zaten var.</span>
+        </label>
+        <button class="esn-btn esn-btn--block esn-btn--lg" id="apiBtn">Bağlan</button>
+      </div>
+    </section>
 
-  <div class="card">
-    <div class="line">
-      <input id="q" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"
-             placeholder="013 ya da isim">
-      <button id="go">Bul</button>
-    </div>
-    <div id="matches"></div>
-    <div class="small">Numara: 013 · 13 · IZM-013 — İsim: en az 3 harf.</div>
-  </div>
+    <!-- SEKME 1: QR -->
+    <section id="tab-scan">
+      <div class="ck-cam"><div id="qr-reader"></div></div>
+      <p class="ck-hint" id="hint">QR'ı çerçeveye getir — kendiliğinden okunur.</p>
+    </section>
 
-  <div class="card">
-    <div class="line">
-      <input id="me" type="text" autocomplete="off" placeholder="Okutan: adın (isteğe bağlı)">
-    </div>
-    <div class="small" id="sync">Liste yükleniyor…</div>
-  </div>
+    <!-- SEKME 2: Elle -->
+    <section id="tab-manual" class="hidden">
+      <div class="esn-card">
+        <div class="esn-card__content" style="padding-top:16px">
+          <label class="esn-field">
+            <span class="esn-field__label">Bilet no ya da isim</span>
+            <input class="esn-input ck-big" id="q" type="text" autocomplete="off"
+                   autocapitalize="off" spellcheck="false" enterkeyhint="search" placeholder="013">
+            <span class="esn-field__help">013 · 13 · IZM-013 — isim için en az 3 harf.</span>
+          </label>
+          <button class="esn-btn esn-btn--block esn-btn--lg" id="go">Bul</button>
+          <ul class="esn-list ck-matches" id="matches"></ul>
+        </div>
+      </div>
+    </section>
 
+    <!-- SONUÇ (iki sekmede de) -->
+    <div id="res" class="hidden"></div>
+
+    <!-- AYARLAR -->
+    <ul class="esn-list">
+      <li class="esn-list__divider"><h3>Ayarlar</h3></li>
+      <li><div class="esn-item">
+        <div class="esn-item__body">
+          <input class="esn-input" id="me" type="text" autocomplete="off" placeholder="Okutan: adın (isteğe bağlı)">
+        </div>
+      </div></li>
+      <li><div class="esn-item">
+        <div class="esn-item__body">
+          <p class="esn-item__title" id="syncT">Liste yükleniyor…</p>
+          <p class="esn-item__sub" id="syncS"></p>
+        </div>
+        <div class="esn-item__end">
+          <button class="esn-btn esn-btn--clear" id="reset">Bağlantıyı değiştir</button>
+        </div>
+      </div></li>
+    </ul>
+
+  </div></main>
+
+  <footer class="esn-footer">ESN Türkiye · Erasmus Student Network</footer>
 </div>
 
 <script>
@@ -99,24 +132,22 @@
   var PREFIX = '';
   var shown = '';          // ekranda sonucu duran kod
   var last = { code: '', at: 0 };
-  var scanning = false;
+  var scanner = null, scanning = false, starting = false;
+  var tab = 'scan';
 
   function el(id) { return document.getElementById(id); }
+  function show(id, on) { el(id).classList[on ? 'remove' : 'add']('hidden'); }
   function esc(s) {
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
   function store(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
   function load(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }
+  function drop(k) { try { localStorage.removeItem(k); } catch (e) {} }
 
   // ============================================================
-  // SUNUCU ÇAĞRISI — iki mod:
-  //   · Apps Script içinde açıldıysa  → google.script.run
-  //   · Dışarıda (GitHub Pages vb.)   → /exec?api=... fetch
-  // Dış modda /exec linki OC linkinin # kısmında gelir:  .../index.html#api=https://script.google.com/.../exec
-  // (# sonrası sunucuya gitmez, sayfa kaynağında da durmaz). Bir kez açılınca telefon hatırlar.
+  // SUNUCU — Apps Script /exec?api=...  (link: #api=... ya da kurulum kartı)
   // ============================================================
-  var INSIDE = !!(window.google && google.script && google.script.run);
   var API = '';
   (function () {
     var m = location.hash.match(/api=([^&]+)/);
@@ -129,13 +160,10 @@
     }
   })();
 
+  function validApi(u) { return /^https:\/\/script\.google(usercontent)?\.com\/.+\/exec$/.test(u); }
+
   function call(fn, args, ok, fail) {
-    if (INSIDE) {
-      var r = google.script.run.withSuccessHandler(ok).withFailureHandler(fail);
-      r[fn].apply(r, args);
-      return;
-    }
-    if (!API) { fail(new Error('Sunucu linki yok — sana gönderilen OC linkini bir kez aç.')); return; }
+    if (!API) { fail(new Error('Sunucu bağlantısı yok')); return; }
     var url = API + '?api=' + fn + '&a=' + encodeURIComponent(JSON.stringify(args)) + '&_=' + Date.now();
     fetch(url).then(function (res) { return res.json(); })
       .then(function (j) { if (j.error) fail(new Error(j.error)); else ok(j.result); })
@@ -150,8 +178,7 @@
     s = s.toUpperCase();
     var pre = PREFIX;
     if (!pre) {
-      // Liste henüz gelmedi, önek bilinmiyor: "IZM-013" gibi tam kodu olduğu gibi al,
-      // yalnız rakamsa ham gönder — sunucu tamamlar
+      // Liste henüz gelmedi: "IZM-013" gibi tam kodu al, yalnız rakamsa ham gönder
       var mm = s.match(/^([A-Z]+)[\s\-_]*\d+$/);
       if (!mm) return s.replace(/[^0-9]/g, '');
       pre = mm[1];
@@ -163,68 +190,66 @@
   }
 
   // ============================================================
-  // KAMERA — hiç durmuyor; okunan kod ekranda kaldığı sürece yok sayılıyor
+  // SEKMELER — Elle Giriş'e geçince kamera kapanır, QR'a dönünce açılır
   // ============================================================
-  function initScanner() {
-    if (typeof Html5Qrcode === 'undefined') {
-      camErr('Kamera kütüphanesi yüklenemedi (internet?). Aşağıdan elle gir.');
-      return;
+  function switchTab(name) {
+    tab = name;
+    store('esn_tab', name);
+    var btns = document.querySelectorAll('.esn-segment__btn');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].setAttribute('aria-selected', btns[i].getAttribute('data-tab') === name ? 'true' : 'false');
     }
-    if (scanning) return;
-
-    var opts = { verbose: false };
-    if (typeof Html5QrcodeSupportedFormats !== 'undefined') {
-      opts.formatsToSupport = [Html5QrcodeSupportedFormats.QR_CODE];
+    show('tab-scan', name === 'scan');
+    show('tab-manual', name === 'manual');
+    show('res', false);
+    el('matches').innerHTML = '';
+    if (name === 'scan') startCam(); else { stopCam(); el('q').focus(); }
+  }
+  (function () {
+    var btns = document.querySelectorAll('.esn-segment__btn');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].addEventListener('click', function () { switchTab(this.getAttribute('data-tab')); });
     }
-    // Destekleyen tarayıcıda (Android Chrome) yerleşik okuyucu — çok daha hızlı
-    opts.experimentalFeatures = { useBarCodeDetectorIfSupported: true };
+  })();
 
-    if (!window.html5QrCode) window.html5QrCode = new Html5Qrcode('qr-reader', opts);
+  // ============================================================
+  // KAMERA — açıkken hiç durmuyor; okunan kod çerçevede kaldıkça yok sayılıyor
+  // ============================================================
+  function startCam() {
+    if (scanning || starting) return;
+    if (typeof Html5Qrcode === 'undefined') { camErr('QR kütüphanesi yüklenemedi. Elle Giriş\'i kullan.'); return; }
+    if (!scanner) {
+      scanner = new Html5Qrcode('qr-reader', {
+        verbose: false,
+        formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+        experimentalFeatures: { useBarCodeDetectorIfSupported: true }   // Android'de yerleşik okuyucu
+      });
+    }
+    starting = true;
+    scanner.start({ facingMode: 'environment' }, { fps: 15, qrbox: 240 }, onScan, function () {})
+      .then(function () {
+        starting = false; scanning = true;
+        el('hint').className = 'ck-hint';
+        el('hint').textContent = "QR'ı çerçeveye getir — kendiliğinden okunur.";
+        if (tab !== 'scan') stopCam();          // açılırken sekme değiştiyse
+      })
+      .catch(function (err) {
+        starting = false;
+        camErr('Kamera açılamadı: ' + (err && err.name ? err.name + ' ' : '') + (err && err.message ? err.message : err));
+      });
+  }
 
-    window.html5QrCode.start(
-      { facingMode: 'environment' },
-      { fps: 15, qrbox: 240 },
-      onScan,
-      function () {}          // her karede "bulunamadı" — normal, sessiz
-    ).then(function () {
-      scanning = true;
-      el('hint').className = 'hint';
-      el('hint').textContent = "QR'ı çerçeveye getir — kendiliğinden okunur.";
-    }).catch(function (err) {
-      camErr('Kamera açılamadı: ' + (err && err.name ? err.name + ' ' : '') +
-             (err && err.message ? err.message : err));
-    });
+  function stopCam() {
+    if (!scanner || !scanning) return;
+    scanning = false;
+    scanner.stop().catch(function () {});
   }
 
   function camErr(msg) {
     scanning = false;
-    el('hint').className = 'hint err';
-    el('hint').innerHTML = esc(msg) + '<br><a href="#" id="retry">Tekrar dene</a>';
-    el('retry').onclick = function (e) { e.preventDefault(); initScanner(); };
-    camDiag();
-  }
-
-  // Hatanın kaynağını ayırt etmek için: uygulama içi tarayıcı mı, izin durumu ne
-  function camDiag() {
-    var ua = navigator.userAgent;
-    var inApp = /; wv\)|FBAN|FBAV|Instagram|WhatsApp|GSA\/|Line\//.test(ua);
-    var lines = [
-      'Tarayıcı: ' + (inApp ? 'UYGULAMA İÇİ (WhatsApp/Gmail vb.) ⚠️' : 'normal'),
-      'iframe: ' + (window.self !== window.top ? 'evet' : 'hayır'),
-      'ua: ' + ua
-    ];
-    var box = document.createElement('div');
-    box.className = 'small';
-    box.style.cssText = 'text-align:left;word-break:break-all;margin-top:8px';
-    function draw() { box.textContent = lines.join('\n'); box.style.whiteSpace = 'pre-wrap'; }
-    draw();
-    el('hint').appendChild(box);
-    try {
-      navigator.permissions.query({ name: 'camera' }).then(function (p) {
-        lines.splice(1, 0, 'Kamera izni: ' + p.state);
-        draw();
-      }).catch(function () {});
-    } catch (e) {}
+    el('hint').className = 'ck-hint ck-hint--err';
+    el('hint').innerHTML = esc(msg) + ' · <a href="#" id="retry">Tekrar dene</a>';
+    el('retry').onclick = function (e) { e.preventDefault(); startCam(); };
   }
 
   function onScan(text) {
@@ -241,7 +266,7 @@
   // OKUTMA — sonuç yerel listeden ANINDA, kayıt arkada
   // ============================================================
   function submit(code) {
-    buzz();
+    try { if (navigator.vibrate) navigator.vibrate(80); } catch (e) {}
     shown = code;
     var t = T[code];
 
@@ -255,46 +280,38 @@
     }
 
     call('checkIn', [code, el('me').value.trim()], function (r) {
-        if (shown === code) shown = r.ticket;   // ham girilen "13" → "IZM-013"
-        if (r.status === 'first' || r.status === 'repeat') {
-          T[r.ticket] = { name: r.name, section: r.section, esncard: r.esncard,
-                          count: r.count, firstAt: r.firstAt };
-          stats();
-          if (shown === r.ticket) render(r.status, r.ticket, T[r.ticket], r.count, '✓ kaydedildi ' + r.at.slice(-8));
-        } else {
-          if (t) { t.count = Math.max(0, t.count - 1); stats(); }
-          if (shown === r.ticket) render(r.status === 'busy' ? 'busy' : 'notfound', r.ticket, null, 0, '');
-        }
-      }, function (err) {
+      if (shown === code) shown = r.ticket;     // ham girilen "13" → "IZM-013"
+      if (r.status === 'first' || r.status === 'repeat') {
+        T[r.ticket] = { name: r.name, section: r.section, esncard: r.esncard, count: r.count, firstAt: r.firstAt };
+        stats();
+        if (shown === r.ticket) render(r.status, r.ticket, T[r.ticket], r.count, '✓ kaydedildi ' + r.at.slice(-8));
+      } else {
         if (t) { t.count = Math.max(0, t.count - 1); stats(); }
-        if (shown === code) {
-          render('fail', code, t, 0, 'KAYDEDİLMEDİ, tekrar okut — ' + (err && err.message ? err.message : err));
-        }
-      });
+        if (shown === r.ticket) render(r.status === 'busy' ? 'busy' : 'notfound', r.ticket, null, 0, '');
+      }
+    }, function (err) {
+      if (t) { t.count = Math.max(0, t.count - 1); stats(); }
+      if (shown === code) render('fail', code, t, 0, 'Kaydedilmedi, tekrar dene — ' + (err && err.message ? err.message : err));
+    });
   }
 
   function render(kind, code, t, n, saveMsg) {
-    var cls = { first: 'first', repeat: 'repeat', wait: 'wait', busy: 'repeat',
-                notfound: 'bad', fail: 'bad' }[kind];
-    var head = { first: '✅ Giriş', repeat: '⚠️ Daha önce okutuldu', wait: '… Aranıyor',
-                 busy: '⏳ Meşgul — tekrar okut', notfound: '❌ Bilet bulunamadı',
-                 fail: '📶 Bağlantı hatası' }[kind];
-    var h = '<div class="res ' + cls + '"><div class="head">' + head + '</div>';
+    var cls = { first: 'first', repeat: 'repeat', wait: 'wait', busy: 'repeat', notfound: 'bad', fail: 'bad' }[kind];
+    var head = { first: '✓ Giriş yapabilir', repeat: '⚠ Daha önce okutuldu', wait: 'Aranıyor…',
+                 busy: 'Sistem meşgul — tekrar okut', notfound: '✕ Bilet bulunamadı', fail: '✕ Bağlantı hatası' }[kind];
+    var h = '<section class="ck-res ck-res--' + cls + '"><div class="ck-res__band">' + head + '</div><div class="ck-res__body">';
     if (t) {
-      h += '<div class="who">' + esc(t.name || '—') + '</div>' +
-           '<div class="meta">' + esc([t.section, t.esncard ? 'ESNcard: ' + t.esncard : '']
-                                        .filter(Boolean).join(' · ')) + '</div>';
-      if (kind === 'repeat') {
-        h += '<div class="meta">İlk: ' + esc(t.firstAt || '?') + ' · bu ' + n + '. okutma</div>';
-      }
+      h += '<p class="ck-res__name">' + esc(t.name || '—') + '</p>';
+      var meta = [];
+      if (t.section) meta.push(esc(t.section));
+      if (t.esncard) meta.push('ESNcard: ' + esc(t.esncard));
+      if (meta.length) h += '<p class="ck-res__meta">' + meta.join(' · ') + '</p>';
+      if (kind === 'repeat') h += '<p class="ck-res__meta">İlk okutma: ' + esc(t.firstAt || '?') + ' · bu ' + n + '. okutma</p>';
     }
-    h += '<div class="code">' + esc(code) + '</div>';
-    if (saveMsg) h += '<div class="save">' + esc(saveMsg) + '</div>';
-    el('res').innerHTML = h + '</div>';
-    el('res').className = '';
+    h += '<div class="ck-res__foot"><span class="ck-code">' + esc(code) + '</span><span>' + esc(saveMsg) + '</span></div></div></section>';
+    el('res').innerHTML = h;
+    show('res', true);
   }
-
-  function buzz() { try { if (navigator.vibrate) navigator.vibrate(80); } catch (e) {} }
 
   function stats() {
     var tot = 0, inside = 0;
@@ -318,24 +335,28 @@
       return;
     }
 
-    var needle = q.toLocaleLowerCase('tr');
-    var hits = [];
+    show('res', false);                       // eski sonuç yeni aramayla karışmasın
+    var needle = q.toLocaleLowerCase('tr'), hits = [];
     for (var k in T) {
       if ((T[k].name || '').toLocaleLowerCase('tr').indexOf(needle) !== -1) hits.push(k);
       if (hits.length >= 8) break;
     }
-    if (!hits.length) { el('matches').innerHTML = '<div class="small">Eşleşen isim yok.</div>'; return; }
+    if (!hits.length) { el('matches').innerHTML = '<li class="esn-empty">Eşleşen isim yok.</li>'; return; }
 
     el('matches').innerHTML = hits.map(function (k) {
-      return '<button class="match" data-code="' + esc(k) + '">' + esc(T[k].name) +
-             ' <span>' + esc(k) + (T[k].count > 0 ? ' · girdi' : '') + '</span></button>';
+      var badge = T[k].count > 0 ? '<span class="esn-badge esn-badge--orange">Girdi</span>'
+                                 : '<span class="esn-badge esn-badge--light">Gelmedi</span>';
+      return '<li><button class="esn-item" data-code="' + esc(k) + '"><div class="esn-item__body">' +
+             '<p class="esn-item__title">' + esc(T[k].name) + '</p>' +
+             '<p class="esn-item__sub">' + esc(k) + (T[k].section ? ' · ' + esc(T[k].section) : '') + '</p>' +
+             '</div><div class="esn-item__end">' + badge + '</div></button></li>';
     }).join('');
   }
 
   el('go').onclick = manual;
   el('q').addEventListener('keydown', function (e) { if (e.key === 'Enter') manual(); });
   el('matches').addEventListener('click', function (e) {
-    var b = e.target.closest ? e.target.closest('.match') : null;
+    var b = e.target.closest ? e.target.closest('[data-code]') : null;
     if (!b) return;
     el('matches').innerHTML = '';
     el('q').value = '';
@@ -346,35 +367,60 @@
   el('me').addEventListener('change', function () { store('esn_scanner', el('me').value.trim()); });
 
   // ============================================================
-  // LİSTE — açılışta senkronlu, sonra 30 sn'de bir diğer telefonların okuttuklarını çeker
+  // BAĞLANTI + LİSTE
   // ============================================================
+  function needSetup(msg) {
+    show('setup', true);
+    el('syncT').textContent = 'Sunucuya bağlı değil';
+    el('syncS').textContent = msg || '';
+  }
+
+  el('apiBtn').onclick = function () {
+    var u = el('apiIn').value.trim();
+    if (!validApi(u)) { el('syncT').textContent = 'Link …/exec ile biten bir Apps Script linki olmalı'; return; }
+    API = u; store('esn_api', u);
+    show('setup', false);
+    pull(true);
+  };
+
+  el('reset').onclick = function () {
+    drop('esn_api'); API = '';
+    el('apiIn').value = '';
+    needSetup('Yeni /exec linkini gir.');
+    window.scrollTo(0, 0);
+  };
+
   function pull(sync) {
+    if (!API) { needSetup(); return; }
+    el('syncT').textContent = 'Liste yükleniyor…';
     call('getTickets', [sync], function (r) {
-        PREFIX = r.prefix || PREFIX;
-        if (r.eventName) el('ev').textContent = r.eventName;
-        var next = {};
-        r.tickets.forEach(function (a) {
-          var mine = T[a[0]];
-          // Kendi iyimser sayacımız sunucudan öndeyse onu koru (kayıt yolda)
-          var count = mine && mine.count > a[4] ? mine.count : a[4];
-          next[a[0]] = { name: a[1], section: a[2], esncard: a[3], count: count, firstAt: a[5] };
-        });
-        T = next;
-        stats();
-        el('sync').textContent = 'Liste güncel · ' + new Date().toLocaleTimeString('tr-TR');
-      }, function (err) {
-        el('sync').textContent = 'Liste alınamadı: ' + (err && err.message ? err.message : err) +
-          ' — okutma yine çalışır, sonuç sunucudan gelir.';
+      PREFIX = r.prefix || PREFIX;
+      if (r.eventName) { el('ev').textContent = r.eventName; document.title = 'Check-in — ' + r.eventName; }
+      var next = {};
+      r.tickets.forEach(function (a) {
+        var mine = T[a[0]];
+        // Kendi iyimser sayacımız sunucudan öndeyse onu koru (kayıt yolda)
+        var count = mine && mine.count > a[4] ? mine.count : a[4];
+        next[a[0]] = { name: a[1], section: a[2], esncard: a[3], count: count, firstAt: a[5] };
       });
+      T = next;
+      stats();
+      show('setup', false);
+      el('syncT').textContent = 'Liste güncel · ' + r.tickets.length + ' bilet';
+      el('syncS').textContent = 'Son güncelleme ' + new Date().toLocaleTimeString('tr-TR') + ' · 30 sn\'de bir yenilenir';
+    }, function (err) {
+      el('syncT').textContent = 'Liste alınamadı';
+      el('syncS').textContent = (err && err.message ? err.message : String(err)) + ' — link doğru mu, web app erişimi "Herkes" mi?';
+    });
   }
 
   // ============================================================
-  // AÇILIŞ — kamera İLK iş, senkron
+  // AÇILIŞ
   // ============================================================
   document.addEventListener('DOMContentLoaded', function () {
-    initScanner();
+    if (load('esn_tab') === 'manual') switchTab('manual'); else switchTab('scan');
     pull(true);
-    setInterval(function () { if (!document.hidden) pull(false); }, 30000);
+    setInterval(function () { if (!document.hidden && API) pull(false); }, 30000);
   });
 </script>
 </body>
