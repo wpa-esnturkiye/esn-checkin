@@ -42,6 +42,8 @@
 
     .ck-big { font-size:22px; letter-spacing:.04em; }
     .ck-matches { margin:0 -16px; }
+    .ck-status { margin:16px; font-size:12.6px; color:var(--text-muted); text-align:center; }
+    .ck-status b { font-weight:500; color:var(--text); }
     .hidden { display:none !important; }
   </style>
 </head>
@@ -54,27 +56,23 @@
     <span class="ck-count"><b id="in">–</b> / <span id="tot">–</span></span>
   </header>
 
-  <div class="esn-segment" role="tablist">
+  <div class="esn-segment" role="tablist" id="tabs">
     <button class="esn-segment__btn" role="tab" data-tab="scan" aria-selected="true">QR Tara</button>
     <button class="esn-segment__btn" role="tab" data-tab="manual" aria-selected="false">Elle Giriş</button>
   </div>
 
   <main class="esn-content"><div class="esn-container">
 
-    <!-- Bağlantı yoksa: /exec linki buraya -->
-    <section class="esn-card hidden" id="setup">
+    <!-- KİLİTLİ: kişisel link yok ya da anahtar geçersiz. Sayfada ayar YOK — link tek giriş yolu -->
+    <section class="esn-card esn-auth hidden" id="locked">
+      <img class="esn-auth__logo" src="esn-tema/img/esn-logo.svg" alt="ESN Türkiye">
       <div class="esn-card__header">
-        <p class="esn-card__subtitle">Kurulum</p>
-        <h2 class="esn-card__title">Sunucu bağlantısı</h2>
+        <p class="esn-card__subtitle">Kapı ekibi</p>
+        <h1 class="esn-card__title">Check-in</h1>
       </div>
       <div class="esn-card__content">
-        <label class="esn-field">
-          <span class="esn-field__label">Apps Script /exec linki</span>
-          <input class="esn-input" id="apiIn" type="url" autocomplete="off" spellcheck="false"
-                 placeholder="https://script.google.com/macros/s/…/exec">
-          <span class="esn-field__help">Bir kez girilir, telefon hatırlar. OC'lere verilen linkte zaten var.</span>
-        </label>
-        <button class="esn-btn esn-btn--block esn-btn--lg" id="apiBtn">Bağlan</button>
+        <p id="lockedMsg">Bu sayfa yalnız kapı ekibi için. Sana gelen <b>Check-in Access</b>
+          mailindeki kişisel linki bu telefonda bir kez aç.</p>
       </div>
     </section>
 
@@ -103,24 +101,8 @@
     <!-- SONUÇ (iki sekmede de) -->
     <div id="res" class="hidden"></div>
 
-    <!-- AYARLAR -->
-    <ul class="esn-list">
-      <li class="esn-list__divider"><h3>Ayarlar</h3></li>
-      <li><div class="esn-item">
-        <div class="esn-item__body">
-          <input class="esn-input" id="me" type="text" autocomplete="off" placeholder="Okutan: adın (isteğe bağlı)">
-        </div>
-      </div></li>
-      <li><div class="esn-item">
-        <div class="esn-item__body">
-          <p class="esn-item__title" id="syncT">Liste yükleniyor…</p>
-          <p class="esn-item__sub" id="syncS"></p>
-        </div>
-        <div class="esn-item__end">
-          <button class="esn-btn esn-btn--clear" id="reset">Bağlantıyı değiştir</button>
-        </div>
-      </div></li>
-    </ul>
+    <!-- Durum satırı — yalnız bilgi, dokunulacak bir şey yok -->
+    <p class="ck-status" id="status">Liste yükleniyor…</p>
 
   </div></main>
 
@@ -146,28 +128,48 @@
   function drop(k) { try { localStorage.removeItem(k); } catch (e) {} }
 
   // ============================================================
-  // SUNUCU — Apps Script /exec?api=...  (link: #api=... ya da kurulum kartı)
+  // SUNUCU — Apps Script /exec?api=...&k=<OC anahtarı>
+  // Tek giriş yolu OC'nin kişisel linki:  …/#api=<exec>&k=<anahtar>
+  // (# sonrası sunucuya gitmez). Telefon ikisini de saklar; sayfada değiştirilecek ayar yok.
   // ============================================================
-  var API = '';
+  var API = '', KEY = '';
   (function () {
-    var m = location.hash.match(/api=([^&]+)/);
-    if (m) {
-      try { API = decodeURIComponent(m[1]); } catch (e) { API = m[1]; }
+    var h = location.hash;
+    var a = h.match(/[#&]api=([^&]+)/), k = h.match(/[#&]k=([a-fA-F0-9]+)/);
+    if (a) {
+      try { API = decodeURIComponent(a[1]); } catch (e) { API = a[1]; }
+      KEY = k ? k[1].toLowerCase() : '';
       store('esn_api', API);
+      store('esn_key', KEY);
       try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
     } else {
       API = load('esn_api');
+      KEY = load('esn_key');
     }
   })();
 
-  function validApi(u) { return /^https:\/\/script\.google(usercontent)?\.com\/.+\/exec$/.test(u); }
-
   function call(fn, args, ok, fail) {
-    if (!API) { fail(new Error('Sunucu bağlantısı yok')); return; }
-    var url = API + '?api=' + fn + '&a=' + encodeURIComponent(JSON.stringify(args)) + '&_=' + Date.now();
+    if (!API || !KEY) { lock(); return; }
+    var url = API + '?api=' + fn + '&k=' + KEY + '&a=' + encodeURIComponent(JSON.stringify(args)) + '&_=' + Date.now();
     fetch(url).then(function (res) { return res.json(); })
-      .then(function (j) { if (j.error) fail(new Error(j.error)); else ok(j.result); })
+      .then(function (j) {
+        if (j.unauthorized) { lock('Bu link artık geçerli değil. Yeni mailindeki linki aç.'); return; }
+        if (j.error) fail(new Error(j.error)); else ok(j.result);
+      })
       .catch(fail);
+  }
+
+  // Kilitli ekran: kamera kapanır, sekmeler gizlenir, saklı bağlantı silinir
+  function lock(msg) {
+    stopCam();
+    drop('esn_api'); drop('esn_key');
+    API = ''; KEY = '';
+    show('tabs', false); show('tab-scan', false); show('tab-manual', false);
+    show('res', false); show('status', false);
+    if (msg) el('lockedMsg').textContent = msg;
+    show('locked', true);
+    el('ev').textContent = 'Check-in';
+    el('in').textContent = '–'; el('tot').textContent = '–';
   }
 
   // Sunucudaki normalize_ ile aynı
@@ -279,7 +281,7 @@
       render('wait', code, null, 0, 'sunucuda kontrol ediliyor…');
     }
 
-    call('checkIn', [code, el('me').value.trim()], function (r) {
+    call('checkIn', [code], function (r) {     // okutanın adını sunucu anahtardan bulur
       if (shown === code) shown = r.ticket;     // ham girilen "13" → "IZM-013"
       if (r.status === 'first' || r.status === 'repeat') {
         T[r.ticket] = { name: r.name, section: r.section, esncard: r.esncard, count: r.count, firstAt: r.firstAt };
@@ -363,37 +365,18 @@
     submit(b.getAttribute('data-code'));
   });
 
-  el('me').value = load('esn_scanner');
-  el('me').addEventListener('change', function () { store('esn_scanner', el('me').value.trim()); });
+  // ============================================================
+  // LİSTE — açılışta senkronlu, sonra 30 sn'de bir diğer telefonların okuttuklarını çeker
+  // ============================================================
+  var ME = '';
 
-  // ============================================================
-  // BAĞLANTI + LİSTE
-  // ============================================================
-  function needSetup(msg) {
-    show('setup', true);
-    el('syncT').textContent = 'Sunucuya bağlı değil';
-    el('syncS').textContent = msg || '';
+  function setStatus(txt) {
+    el('status').innerHTML = (ME ? 'Okutan: <b>' + esc(ME) + '</b> · ' : '') + esc(txt);
   }
 
-  el('apiBtn').onclick = function () {
-    var u = el('apiIn').value.trim();
-    if (!validApi(u)) { el('syncT').textContent = 'Link …/exec ile biten bir Apps Script linki olmalı'; return; }
-    API = u; store('esn_api', u);
-    show('setup', false);
-    pull(true);
-  };
-
-  el('reset').onclick = function () {
-    drop('esn_api'); API = '';
-    el('apiIn').value = '';
-    needSetup('Yeni /exec linkini gir.');
-    window.scrollTo(0, 0);
-  };
-
   function pull(sync) {
-    if (!API) { needSetup(); return; }
-    el('syncT').textContent = 'Liste yükleniyor…';
     call('getTickets', [sync], function (r) {
+      ME = r.ocName || ME;
       PREFIX = r.prefix || PREFIX;
       if (r.eventName) { el('ev').textContent = r.eventName; document.title = 'Check-in — ' + r.eventName; }
       var next = {};
@@ -405,19 +388,18 @@
       });
       T = next;
       stats();
-      show('setup', false);
-      el('syncT').textContent = 'Liste güncel · ' + r.tickets.length + ' bilet';
-      el('syncS').textContent = 'Son güncelleme ' + new Date().toLocaleTimeString('tr-TR') + ' · 30 sn\'de bir yenilenir';
+      setStatus(r.tickets.length + ' bilet · güncellendi ' +
+                new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }));
     }, function (err) {
-      el('syncT').textContent = 'Liste alınamadı';
-      el('syncS').textContent = (err && err.message ? err.message : String(err)) + ' — link doğru mu, web app erişimi "Herkes" mi?';
+      setStatus('Liste alınamadı: ' + (err && err.message ? err.message : err) + ' — internet?');
     });
   }
 
   // ============================================================
-  // AÇILIŞ
+  // AÇILIŞ — link yoksa kilitli ekran, kamera hiç açılmaz
   // ============================================================
   document.addEventListener('DOMContentLoaded', function () {
+    if (!API || !KEY) { lock(); return; }
     if (load('esn_tab') === 'manual') switchTab('manual'); else switchTab('scan');
     pull(true);
     setInterval(function () { if (!document.hidden && API) pull(false); }, 30000);

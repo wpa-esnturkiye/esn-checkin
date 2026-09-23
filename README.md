@@ -3,9 +3,9 @@
 Kapıda QR bilet okutma sayfası — ESN teması (`esn-tema/esn.css`, Poppins, ESN logosu).
 Statik; veri Google Apps Script web app'inden `/exec?api=getTickets|checkIn` ile JSON olarak geliyor.
 
-**Açma:** `https://<bu sayfa>/#api=<Apps Script /exec linki>` — ya da sayfadaki "Sunucu bağlantısı"
-kartına /exec linkini yapıştır. `#` sonrası sunucuya gitmez, repoda durmaz; telefon bir kez
-açınca hatırlar. Linki yalnız kapı ekibiyle paylaş.
+**Açma:** yalnız OC'nin kişisel linkiyle — `https://<bu sayfa>/#api=<Apps Script /exec>&k=<OC anahtarı>`.
+Link google-EM menüsünden (OC'lere Check-in Linki Gönder) mailleniyor. Linksiz ya da geçersiz
+anahtarla açılırsa kilitli ekran çıkar; sayfada değiştirilecek ayar yok. Okutan adı sunucuda anahtardan bulunur.
 
 **İki sekme:** *QR Tara* (kamera açık, kesintisiz okur) · *Elle Giriş* (numara ya da isim; kamera kapanır).
 
